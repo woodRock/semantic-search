@@ -50,15 +50,15 @@ function App() {
   const [isRegex, setIsRegex] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Dynamic window resizing logic
-  const isExpanded = results.length > 0 || searching || !!message || showSettings;
+  // Simplified expansion logic
+  const isExpanded = results.length > 0 || searching || indexing || showSettings;
 
   useEffect(() => {
     const appWindow = getCurrentWebviewWindow();
     if (isExpanded) {
       appWindow.setSize(new LogicalSize(750, 550));
     } else {
-      appWindow.setSize(new LogicalSize(750, 120));
+      appWindow.setSize(new LogicalSize(750, 140));
     }
   }, [isExpanded]);
 
@@ -68,6 +68,9 @@ function App() {
       setMessage(event.payload.message);
       if (event.payload.total > 0) {
         setProgress((event.payload.current / event.payload.total) * 100);
+      }
+      if (event.payload.message === "Indexing complete") {
+        setTimeout(() => setMessage(""), 3000); // Clear message after 3s
       }
     });
     return () => { unlisten.then((fn) => fn()); };
@@ -146,8 +149,7 @@ function App() {
   }
 
   return (
-    <main className="container spotlight-container">
-      {/* Search Section - Always centered in compact mode */}
+    <main className={`container ${isExpanded ? 'expanded' : 'compact'}`}>
       <div className="search-section">
         <div className="search-bar spotlight-search">
           <input
@@ -171,7 +173,6 @@ function App() {
         )}
       </div>
 
-      {/* Content Section - Hidden in compact mode */}
       {isExpanded && (
         <div className="expanded-content">
           <div className="header">
@@ -247,7 +248,7 @@ function App() {
       {!isExpanded && (
         <div className="compact-footer">
           <button className="compact-settings-btn" onClick={() => setShowSettings(true)}>⚙</button>
-          <span className="shortcut-hint">Type to search...</span>
+          <span className="shortcut-hint">Spotlight Search active</span>
         </div>
       )}
     </main>
