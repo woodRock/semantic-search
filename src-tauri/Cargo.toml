@@ -1,0 +1,48 @@
+[package]
+name = "tauri-app"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "tauri_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tantivy = "0.22"
+candle-core = "0.8"
+candle-nn = "0.8"
+candle-transformers = "0.8"
+tokenizers = "0.21"
+pdf-extract = "0.7"
+docx-rust = "0.1"
+html2text = "0.13"
+walkdir = "2"
+ignore = "0.4"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tokio = { version = "1", features = ["full"] }
+infer = "0.16"
+itertools = "0.13"
+futures = "0.3"
+hf-hub = "0.4"
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+indicatif = "0.17"
+hard-xml = "1"
+clap = { version = "4", features = ["derive"] }
+
