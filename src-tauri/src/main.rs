@@ -8,6 +8,8 @@ use tauri_app_lib::core::embedding::EmbeddingModel;
 use std::path::PathBuf;
 use tokio::runtime::Runtime;
 
+const MODEL_NAME: &str = "qwen3.5:0.8b";
+
 #[derive(Parser)]
 #[command(name = "semantic-search")]
 #[command(about = "A cross-platform local file semantic search tool", long_about = None)]
@@ -50,21 +52,21 @@ fn main() {
                 let data_path = get_data_dir(data_dir);
                 println!("Indexing {} into {}...", path, data_path.display());
                 rt.block_on(async {
-                    let indexer = Indexer::new(data_path).await.expect("Failed to create indexer");
-                    indexer.index_directory(&PathBuf::from(path)).await.expect("Failed to index");
+                    let mut indexer = Indexer::new(data_path, MODEL_NAME).expect("Failed to create indexer");
+                    indexer.index_directory(&PathBuf::from(path), None).await.expect("Failed to index");
                 });
                 println!("Indexing complete!");
             }
             Commands::Search { query, data_dir, limit } => {
                 let data_path = get_data_dir(data_dir);
                 rt.block_on(async {
-                    let searcher = Search::new(data_path).expect("Failed to create searcher");
-                    let embedding_model = EmbeddingModel::new().expect("Failed to create embedding model");
+                    let searcher = Search::new(&data_path).expect("Failed to create searcher");
+                    let embedding_model = EmbeddingModel::new(MODEL_NAME).expect("Failed to create embedding model");
                     let results = searcher.hybrid_search(&embedding_model, &query, limit).await.expect("Search failed");
                     
                     println!("Search results for '{}':", query);
-                    for (path, score) in results {
-                        println!("{:.4} - {}", score, path);
+                    for result in results {
+                        println!("{:.4} - {}", result.score, result.path);
                     }
                 });
             }
@@ -79,7 +81,6 @@ fn get_data_dir(data_dir: Option<String>) -> PathBuf {
     if let Some(dir) = data_dir {
         PathBuf::from(dir)
     } else {
-        // Default to a folder in home directory for CLI if not provided
         let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).expect("Could not find home directory");
         PathBuf::from(home).join(".semantic-search")
     }
