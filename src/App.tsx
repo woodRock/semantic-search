@@ -43,6 +43,7 @@ function App() {
   const [fileFilter, setFileFilter] = useState("");
   const [isRegex, setIsRegex] = useState(false);
 
+  // Dynamic window resizing logic
   const isExpanded = results.length > 0 || searching || indexing || showSettings || !!message;
 
   useEffect(() => {
@@ -52,7 +53,7 @@ function App() {
         if (isExpanded) {
           await appWindow.setSize(new LogicalSize(750, 550));
         } else {
-          await appWindow.setSize(new LogicalSize(750, 100));
+          await appWindow.setSize(new LogicalSize(750, 140));
         }
       } catch (e) {
         console.error("Window resize failed:", e);
@@ -66,6 +67,7 @@ function App() {
     const unlisten = listen<ProgressEvent>("indexing-progress", (event) => {
       setMessage(event.payload.message);
       if (event.payload.total > 0) setProgress((event.payload.current / event.payload.total) * 100);
+      if (event.payload.message === "Indexing complete") setTimeout(() => setMessage(""), 3000);
     });
     return () => { unlisten.then((fn) => fn()); };
   }, []);
@@ -75,7 +77,7 @@ function App() {
 
   async function handleSearch() {
     if (!query) return;
-    setSearching(true);
+    setSearching(true); setChatResponse("");
     try {
       const res = await invoke<SearchResult[]>("search", { 
         query, fileTypeFilter: fileFilter || null, isRegex 
@@ -84,66 +86,72 @@ function App() {
     } catch (e) { console.error(e); } finally { setSearching(false); }
   }
 
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      if (results.length > 0) invoke("open_path", { path: results[0].path }); // Open first result
+      else handleSearch();
+    } else if (e.key === "Escape") {
+      setQuery(""); setResults([]); setShowSettings(false); setMessage("");
+    }
+  }
+
   return (
     <main className={`container ${isExpanded ? 'expanded' : 'compact'}`}>
-      {isExpanded && (
-        <div className="header">
-          <h1>Semantic Search</h1>
-          <button onClick={() => setShowSettings(!showSettings)}>{showSettings ? "Back" : "Settings"}</button>
-        </div>
-      )}
-
-      <div className="search-view">
-        <div className="search-controls">
-          <input 
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            placeholder="Search your files..."
-          />
-          {!isExpanded && <button onClick={() => setShowSettings(true)} style={{ background: 'transparent', opacity: 0.5 }}>⚙</button>}
-        </div>
-
-        {isExpanded && (
-          <div className="expanded-view">
-            {showSettings ? (
-              <div className="settings-panel">
-                <div className="setting-group"><label>Ollama URL</label><input value={settings.ollama_url} onChange={(e) => saveSettings({ ...settings, ollama_url: e.target.value })} /></div>
-                <div className="setting-group"><label>Ignore List</label>
-                  <div style={{ display: 'flex', gap: '10px' }}><input value={newIgnorePath} onChange={(e) => setNewIgnorePath(e.target.value)} placeholder="Pattern..."/><button onClick={() => {saveSettings({...settings, ignored_paths: [...settings.ignored_paths, newIgnorePath]}); setNewIgnorePath("");}}>Add</button></div>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="filters">
-                  <label><input type="checkbox" checked={isRegex} onChange={(e) => setIsRegex(e.target.checked)} /> Regex</label>
-                  <input placeholder="Ext" value={fileFilter} onChange={(e) => setFileFilter(e.target.value)} style={{ width: '60px', marginLeft: '10px' }} />
-                </div>
-                {message && <div className="progress"><div>{message}</div>{indexing && <div className="p-bar"><div style={{ width: `${progress}%` }} /></div>}</div>}
-                <div className="results-list">
-                  {results.map((r, i) => (
-                    <div key={i} className="result-item" onClick={() => invoke("open_path", { path: r.path })}>
-                      <div className="path">{r.path}</div>
-                      <div className="snippet" dangerouslySetInnerHTML={{ __html: r.snippet }} />
-                    </div>
-                  ))}
-                </div>
-                {results.length > 0 && (
-                  <div className="chat-area">
-                    <div className="chat-input"><input value={chatQuery} onChange={(e) => setChatQuery(e.target.value)} placeholder="Ask..." /><button onClick={async () => {setIsChatting(true); setChatResponse(await invoke("ask_question", { query: chatQuery, context: results.slice(0, 5).map(r => r.snippet) })); setIsChatting(false);}} disabled={isChatting}>Ask</button></div>
-                    {chatResponse && <div className="chat-response">{chatResponse}</div>}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        )}
+      {/* Search bar is always visible */}
+      <div className="search-section" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+        <input 
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Search files..."
+          style={{ flex: 1, padding: '12px', fontSize: '1.4rem', borderRadius: '10px', border: '1px solid #444', background: '#222', color: 'white' }}
+        />
+        {!isExpanded && <button onClick={() => setShowSettings(true)} style={{ background: 'transparent', opacity: 0.5 }}>⚙</button>}
       </div>
 
       {isExpanded && (
-        <div className="footer">
-          <button onClick={async () => {const s = await open({ directory: true }); if(s) {setIndexing(true); await invoke("index_directory", {dirPath: s}); setIndexing(false);}}}>+ Folder</button>
+        <div className="expanded-view" style={{ flex: 1, overflowY: 'auto', marginTop: '15px' }}>
+          <div className="header" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
+            <span style={{ opacity: 0.5, fontSize: '0.8rem', textTransform: 'uppercase' }}>Semantic Search</span>
+            <button onClick={() => setShowSettings(!showSettings)} style={{ fontSize: '0.8rem' }}>{showSettings ? "Close" : "Settings"}</button>
+          </div>
+
+          {showSettings ? (
+            <div className="settings-panel">
+              <div className="setting-group"><label>Ollama URL</label><input value={settings.ollama_url} onChange={(e) => saveSettings({ ...settings, ollama_url: e.target.value })} /></div>
+              <div className="setting-group"><label>Ignore List</label>
+                <div style={{ display: 'flex', gap: '10px' }}><input value={newIgnorePath} onChange={(e) => setNewIgnorePath(e.target.value)} /><button onClick={() => {saveSettings({...settings, ignored_paths: [...settings.ignored_paths, newIgnorePath]}); setNewIgnorePath("");}}>Add</button></div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {message && <div style={{ color: '#646cff', fontSize: '0.9rem', marginBottom: '10px' }}>{message}</div>}
+              <div className="results-list">
+                {results.map((r, i) => (
+                  <div key={i} className="result-item" onClick={() => invoke("open_path", { path: r.path })} style={{ padding: '10px', background: '#222', borderRadius: '8px', marginBottom: '8px' }}>
+                    <div style={{ fontWeight: 'bold', color: '#646cff', fontSize: '0.9rem' }}>{r.path}</div>
+                    <div style={{ fontSize: '0.8rem', color: '#aaa' }} dangerouslySetInnerHTML={{ __html: r.snippet }} />
+                  </div>
+                ))}
+              </div>
+              {results.length > 0 && (
+                <div className="chat-panel" style={{ marginTop: '10px', padding: '10px', background: '#111', borderRadius: '10px' }}>
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <input value={chatQuery} onChange={(e) => setChatQuery(e.target.value)} placeholder="Ask..." style={{ flex: 1, padding: '5px' }} />
+                    <button onClick={async () => {setIsChatting(true); setChatResponse(await invoke("ask_question", { query: chatQuery, context: results.slice(0, 5).map(r => r.snippet) })); setIsChatting(false);}} disabled={isChatting}>Ask</button>
+                  </div>
+                  {chatResponse && <div style={{ marginTop: '10px', fontSize: '0.85rem', whiteSpace: 'pre-wrap' }}>{chatResponse}</div>}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {isExpanded && (
+        <div className="footer" style={{ marginTop: 'auto', paddingTop: '10px', borderTop: '1px solid #333' }}>
+          <button onClick={async () => {const s = await open({directory:true}); if(s) await invoke("index_directory", {dirPath: s})}}>+ Folder</button>
         </div>
       )}
     </main>
