@@ -12,9 +12,10 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Semantic Search",
         "width": 750,
-        "height": 180,
+        "height": 140,
         "transparent": true,
         "decorations": false,
         "resizable": false,
@@ -23,8 +24,7 @@
     ],
     "security": {
       "csp": null
-    },
-    "macOSPrivateApi": true
+    }
   },
   "bundle": {
     "active": true,
