@@ -54,16 +54,16 @@ function App() {
   const [showFilters, setShowFilters] = useState(false);
 
   // Dynamic window resizing
+  const isExpanded = results.length > 0 || searching || !!message || showSettings;
+
   useEffect(() => {
     const appWindow = getCurrentWebviewWindow();
-    const isExpanded = results.length > 0 || searching || !!message || showSettings;
-    
     if (isExpanded) {
       appWindow.setSize(new LogicalSize(750, 550));
     } else {
-      appWindow.setSize(new LogicalSize(750, 80));
+      appWindow.setSize(new LogicalSize(750, 100));
     }
-  }, [results.length, searching, message, showSettings]);
+  }, [isExpanded]);
 
   useEffect(() => {
     fetchSettings();
@@ -223,17 +223,20 @@ function App() {
       setResults([]);
       setActiveIndex(-1);
       setChatResponse("");
+      setShowSettings(false);
     }
   }
 
   return (
     <main className="container spotlight-container">
-      <div className="header">
-        <h1>Semantic Search</h1>
-        <button className="settings-toggle" onClick={() => setShowSettings(!showSettings)}>
-          {showSettings ? "✕ Close Settings" : "⚙ Settings"}
-        </button>
-      </div>
+      {isExpanded && (
+        <div className="header">
+          <h1>Semantic Search</h1>
+          <button className="settings-toggle" onClick={() => setShowSettings(!showSettings)}>
+            {showSettings ? "✕ Close Settings" : "⚙ Settings"}
+          </button>
+        </div>
+      )}
       
       {showSettings ? (
         <div className="settings-panel">
@@ -389,6 +392,11 @@ function App() {
             <button onClick={handlePickDirectory} disabled={indexing}>
               {indexing ? "Indexing..." : "+ Index Folder"}
             </button>
+            {!isExpanded && (
+              <button className="compact-settings-btn" onClick={() => setShowSettings(true)}>
+                ⚙
+              </button>
+            )}
             <span className="shortcut-hint">Cmd+Shift+Space to toggle</span>
           </div>
         </>
