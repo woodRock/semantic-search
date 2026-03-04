@@ -7199,6 +7199,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-window-state",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "walkdir",

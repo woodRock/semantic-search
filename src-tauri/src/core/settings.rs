@@ -6,6 +6,7 @@ use std::fs;
 pub struct Settings {
     pub ignored_paths: Vec<String>,
     pub ollama_url: String,
+    pub model_name: String,
     pub theme: String, // "system", "light", "dark"
 }
 
@@ -18,6 +19,7 @@ impl Default for Settings {
                 "target".to_string(),
             ],
             ollama_url: "http://localhost:11434".to_string(),
+            model_name: "qwen3.5:0.8b".to_string(),
             theme: "system".to_string(),
         }
     }

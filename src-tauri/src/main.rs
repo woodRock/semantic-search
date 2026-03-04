@@ -3,12 +3,10 @@
 
 use clap::{Parser, Subcommand};
 use tauri_app_lib::core::indexer::Indexer;
-use tauri_app_lib::core::search::Search;
+use tauri_app_lib::core::search::{Search, SearchMode};
 use tauri_app_lib::core::embedding::EmbeddingModel;
 use std::path::PathBuf;
 use tokio::runtime::Runtime;
-
-const MODEL_NAME: &str = "qwen3.5:0.8b";
 
 #[derive(Parser)]
 #[command(name = "semantic-search")]
@@ -56,9 +54,10 @@ fn main() {
         match command {
             Commands::Index { path, data_dir } => {
                 let data_path = get_data_dir(data_dir);
+                let settings = tauri_app_lib::core::settings::Settings::load(&data_path);
                 println!("Indexing {} into {}...", path, data_path.display());
                 rt.block_on(async {
-                    let mut indexer = Indexer::new(data_path, MODEL_NAME).expect("Failed to create indexer");
+                    let indexer = Indexer::new(data_path, &settings.model_name).expect("Failed to create indexer");
                     indexer.index_directory(&PathBuf::from(path), None).await.expect("Failed to index");
                 });
                 println!("Indexing complete!");
@@ -68,9 +67,19 @@ fn main() {
                 let settings = tauri_app_lib::core::settings::Settings::load(&data_path);
                 rt.block_on(async {
                     let searcher = Search::new(&data_path).expect("Failed to create searcher");
-                    let embedding_model = EmbeddingModel::new(MODEL_NAME, &settings.ollama_url).expect("Failed to create embedding model");
+                    let embedding_model = EmbeddingModel::new(&settings.model_name, &settings.ollama_url).expect("Failed to create embedding model");
                     let filter_ref = ext.as_deref();
-                    let results = searcher.hybrid_search(&embedding_model, &query, limit, filter_ref, regex).await.expect("Search failed");
+                    let results = searcher.hybrid_search(
+                        &embedding_model, 
+                        &query, 
+                        limit, 
+                        filter_ref, 
+                        regex, 
+                        SearchMode::Hybrid, 
+                        None, 
+                        None, 
+                        false
+                    ).await.expect("Search failed");
                     
                     println!("Search results for '{}':", query);
                     for result in results {

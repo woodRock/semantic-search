@@ -1,26 +1,32 @@
 pub mod core;
 
 use crate::core::indexer::Indexer;
-use crate::core::search::{Search, SearchResult};
+use crate::core::search::Search;
 use crate::core::embedding::EmbeddingModel;
 use crate::core::settings::Settings;
 use crate::core::chat::ChatModel;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager};
+use std::sync::Arc;
+use tauri::{AppHandle, Manager, Emitter};
 use tauri_plugin_global_shortcut::{Shortcut, Modifiers, Code};
 use notify::{Watcher, RecursiveMode, Event};
-
-const MODEL_NAME: &str = "qwen3.5:0.8b";
 
 #[tauri::command]
 async fn index_directory(handle: AppHandle, dir_path: String) -> Result<(), String> {
     let app_data_dir = handle.path().app_data_dir().map_err(|e| e.to_string())?;
-    let mut indexer = Indexer::new(app_data_dir.clone(), MODEL_NAME).map_err(|e| e.to_string())?;
+    let settings = Settings::load(&app_data_dir);
+    let indexer = Indexer::new(app_data_dir.clone(), &settings.model_name).map_err(|e| e.to_string())?;
+    let indexer_arc = Arc::new(indexer);
     
-    indexer.index_directory(&PathBuf::from(&dir_path), Some(&handle)).await.map_err(|e| e.to_string())?;
+    let indexer_clone = indexer_arc.clone();
+    let handle_clone = handle.clone();
+    let dir_path_buf = PathBuf::from(&dir_path);
+    
+    indexer_clone.index_directory(&dir_path_buf, Some(handle_clone)).await.map_err(|e: anyhow::Error| e.to_string())?;
 
     // Incremental Watcher
     let dir_path_clone = dir_path.clone();
+    let model_name_clone = settings.model_name.clone();
     tauri::async_runtime::spawn(async move {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher = notify::recommended_watcher(tx).unwrap();
@@ -28,7 +34,7 @@ async fn index_directory(handle: AppHandle, dir_path: String) -> Result<(), Stri
 
         for res in rx {
             if let Ok(Event { kind, paths, .. }) = res {
-                let mut indexer = Indexer::new(app_data_dir.clone(), MODEL_NAME).unwrap();
+                let indexer = Indexer::new(app_data_dir.clone(), &model_name_clone).unwrap();
                 for path in paths {
                     match kind {
                         notify::EventKind::Modify(_) | notify::EventKind::Create(_) => {
@@ -48,20 +54,29 @@ async fn index_directory(handle: AppHandle, dir_path: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-async fn search(
-    handle: AppHandle, 
+async fn simple_search(
+    handle: AppHandle,
     query: String,
-    file_type_filter: Option<String>,
-    is_regex: bool
-) -> Result<Vec<SearchResult>, String> {
+    limit: usize,
+) -> Result<Vec<crate::core::search::SearchResult>, String> {
     let app_data_dir = handle.path().app_data_dir().map_err(|e| e.to_string())?;
     let settings = Settings::load(&app_data_dir);
+    
     let searcher = Search::new(&app_data_dir).map_err(|e| e.to_string())?;
-    let embedding_model = EmbeddingModel::new(MODEL_NAME, &settings.ollama_url).map_err(|e| e.to_string())?;
-    
-    let filter_ref = file_type_filter.as_deref();
-    
-    let results = searcher.hybrid_search(&embedding_model, &query, 20, filter_ref, is_regex).await.map_err(|e| e.to_string())?;
+    let embedding_model = EmbeddingModel::new(&settings.model_name, &settings.ollama_url).map_err(|e| e.to_string())?;
+
+    let results = searcher.hybrid_search(
+        &embedding_model,
+        &query,
+        limit,
+        None,
+        false,
+        crate::core::search::SearchMode::Hybrid,
+        None,
+        None,
+        false
+    ).await.map_err(|e| e.to_string())?;
+
     Ok(results)
 }
 
@@ -89,7 +104,7 @@ fn open_path(handle: AppHandle, path: String) -> Result<(), String> {
 async fn ask_question(handle: AppHandle, query: String, context: Vec<String>) -> Result<String, String> {
     let app_data_dir = handle.path().app_data_dir().map_err(|e| e.to_string())?;
     let settings = Settings::load(&app_data_dir);
-    let chat_model = ChatModel::new(MODEL_NAME, &settings.ollama_url);
+    let chat_model = ChatModel::new(&settings.model_name, &settings.ollama_url);
     
     let clean_context: Vec<String> = context.into_iter()
         .map(|s| s.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", ""))
@@ -105,6 +120,32 @@ fn toggle_window(app: &AppHandle) {
     } else {
         window.show().unwrap();
         window.set_focus().unwrap();
+    }
+}
+
+#[tauri::command]
+async fn get_file_summary(handle: AppHandle, path: String) -> Result<String, String> {
+    let app_data_dir = handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let settings = Settings::load(&app_data_dir);
+    let searcher = Search::new(&app_data_dir).map_err(|e| e.to_string())?;
+    
+    let embedding_model = EmbeddingModel::new(&settings.model_name, &settings.ollama_url).map_err(|e| e.to_string())?;
+    let results = searcher.hybrid_search(
+        &embedding_model, 
+        &format!("path:\"{}\"", path), 
+        1, 
+        None, 
+        false, 
+        crate::core::search::SearchMode::Keyword,
+        None,
+        None,
+        false
+    ).await.map_err(|e| e.to_string())?;
+    
+    if let Some(res) = results.first() {
+        Ok(res.summary.clone())
+    } else {
+        Err("File not found in index".to_string())
     }
 }
 
@@ -133,7 +174,7 @@ pub fn run() {
             _app.set_activation_policy(tauri::ActivationPolicy::Regular);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![index_directory, search, get_settings, update_settings, open_path, ask_question])
+        .invoke_handler(tauri::generate_handler![index_directory, simple_search, get_settings, update_settings, open_path, ask_question, get_file_summary])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

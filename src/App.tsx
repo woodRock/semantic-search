@@ -8,6 +8,8 @@ interface SearchResult {
   path: string;
   score: number;
   snippet: string;
+  summary: string;
+  modified: number;
 }
 
 interface ProgressEvent {
@@ -19,41 +21,49 @@ interface ProgressEvent {
 interface Settings {
   ignored_paths: string[];
   ollama_url: string;
+  model_name: string;
   theme: string;
 }
 
 function App() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  
   const [indexing, setIndexing] = useState(false);
   const [searching, setSearching] = useState(false);
   const [message, setMessage] = useState("");
   const [progress, setProgress] = useState(0);
   
+  const [limit, setLimit] = useState(20);
+  const [sortOrder, setSortOrder] = useState<"relevance" | "date">("relevance");
+
   const [chatQuery, setChatQuery] = useState("");
   const [chatResponse, setChatResponse] = useState("");
   const [isChatting, setIsChatting] = useState(false);
+  const [showChat, setShowChat] = useState(false);
 
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<Settings>({ 
     ignored_paths: [], 
     ollama_url: "http://localhost:11434",
+    model_name: "qwen3.5:0.8b",
     theme: "system"
   });
+
   const [newIgnorePath, setNewIgnorePath] = useState("");
-  const [fileFilter, setFileFilter] = useState("");
-  const [isRegex, setIsRegex] = useState(false);
 
   useEffect(() => {
     fetchSettings();
-    const unlisten = listen<ProgressEvent>("indexing-progress", (event) => {
+    const unlistenProgress = listen<ProgressEvent>("indexing-progress", (event) => {
       setMessage(event.payload.message);
       if (event.payload.total > 0) setProgress((event.payload.current / event.payload.total) * 100);
     });
-    return () => { unlisten.then((fn) => fn()); };
+    
+    return () => { 
+      unlistenProgress.then((fn) => fn()); 
+    };
   }, []);
 
-  // Theme effect
   useEffect(() => {
     const root = document.documentElement;
     if (settings.theme === "dark") {
@@ -83,16 +93,26 @@ function App() {
     setSearching(true);
     setChatResponse("");
     try {
-      const res = await invoke<SearchResult[]>("search", { 
-        query, fileTypeFilter: fileFilter || null, isRegex 
+      const res = await invoke<SearchResult[]>("simple_search", { 
+        query, 
+        limit
       });
       setResults(res);
-    } catch (e) { console.error(e); } finally { setSearching(false); }
+    } catch (e) { 
+      console.error(e); 
+      setMessage("Error performing search. Is Ollama running?");
+    } finally { 
+      setSearching(false); 
+    }
   }
+
+  const sortedResults = [...results].sort((a, b) => {
+    if (sortOrder === "date") return b.modified - a.modified;
+    return 0; // Already sorted by relevance from backend
+  });
 
   return (
     <main className="app-container">
-      {/* Settings Bar / Navigation */}
       <nav className="navbar">
         <div className="nav-left">
           <span className="logo">🔍 Semantic Search</span>
@@ -113,6 +133,10 @@ function App() {
               <input value={settings.ollama_url} onChange={(e) => saveSettings({ ...settings, ollama_url: e.target.value })} />
             </div>
             <div className="setting-group">
+              <label>Model Name</label>
+              <input value={settings.model_name} onChange={(e) => saveSettings({ ...settings, model_name: e.target.value })} placeholder="e.g. qwen3.5:0.8b" />
+            </div>
+            <div className="setting-group">
               <label>Theme Mode</label>
               <select value={settings.theme} onChange={(e) => saveSettings({ ...settings, theme: e.target.value })}>
                 <option value="system">System Default</option>
@@ -124,7 +148,7 @@ function App() {
               <label>Ignore List</label>
               <div className="input-row">
                 <input value={newIgnorePath} onChange={(e) => setNewIgnorePath(e.target.value)} placeholder="e.g. node_modules" />
-                <button onClick={() => {saveSettings({...settings, ignored_paths: [...settings.ignored_paths, newIgnorePath]}); setNewIgnorePath("");}}>Add</button>
+                <button className="tool-btn" onClick={() => {saveSettings({...settings, ignored_paths: [...settings.ignored_paths, newIgnorePath]}); setNewIgnorePath("");}}>Add</button>
               </div>
               <ul className="ignore-list">
                 {settings.ignored_paths.map(p => (
@@ -142,19 +166,26 @@ function App() {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                  placeholder="Ask anything about your files..."
+                  placeholder="Search for keywords or describe what you're looking for..."
                 />
                 <button className="search-btn" onClick={handleSearch} disabled={searching}>
                   {searching ? "Searching..." : "Search"}
                 </button>
               </div>
-              <div className="search-options">
-                <label><input type="checkbox" checked={isRegex} onChange={(e) => setIsRegex(e.target.checked)} /> Regex</label>
-                <input className="ext-input" placeholder="Extension (e.g. .md)" value={fileFilter} onChange={(e) => setFileFilter(e.target.value)} />
+              <div className="search-options" style={{justifyContent: 'flex-end'}}>
+                <select className="tool-select" value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
+                  <option value={10}>Top 10</option>
+                  <option value={20}>Top 20</option>
+                  <option value={50}>Top 50</option>
+                </select>
+                <select className="tool-select" value={sortOrder} onChange={(e) => setSortOrder(e.target.value as "relevance" | "date")}>
+                  <option value="relevance">Sort by Relevance</option>
+                  <option value="date">Sort by Date</option>
+                </select>
               </div>
             </div>
 
-            {message && (
+            {message && !searching && (
               <div className="status-msg">
                 {message}
                 {indexing && <div className="progress-bg"><div className="progress-fill" style={{ width: `${progress}%` }} /></div>}
@@ -162,24 +193,56 @@ function App() {
             )}
 
             <div className="results-container">
+              {results.length > 0 && (
+                <div className="results-header">
+                  <span>Found {results.length} results</span>
+                  <button className="ask-ai-btn" onClick={() => setShowChat(!showChat)}>
+                    ✨ Chat with results
+                  </button>
+                </div>
+              )}
+              
               <div className="results-list">
-                {results.map((r, i) => (
+                {sortedResults.map((r, i) => (
                   <div key={i} className="result-card" onClick={() => invoke("open_path", { path: r.path })}>
-                    <div className="res-path">{r.path}</div>
+                    <div className="res-header-row">
+                      <div className="res-path">{r.path}</div>
+                      <div className="res-date">{r.modified > 0 ? new Date(r.modified * 1000).toLocaleDateString() : ""}</div>
+                    </div>
+                    {r.summary && r.summary !== "No summary available." && <div className="res-summary">{r.summary}</div>}
                     <div className="res-snippet" dangerouslySetInnerHTML={{ __html: r.snippet }} />
                   </div>
                 ))}
                 {!searching && results.length === 0 && query && <p className="empty-state">No results found.</p>}
               </div>
 
-              {results.length > 0 && (
-                <div className="chat-sidebar">
-                  <h3>Ask AI about these results</h3>
-                  <div className="chat-input-row">
-                    <input value={chatQuery} onChange={(e) => setChatQuery(e.target.value)} placeholder="What's in these files?" />
-                    <button onClick={async () => {setIsChatting(true); setChatResponse(await invoke("ask_question", { query: chatQuery, context: results.slice(0, 5).map(r => r.snippet) })); setIsChatting(false);}} disabled={isChatting}>Ask</button>
+              {showChat && (
+                <div className="chat-overlay">
+                  <div className="chat-header">
+                    <h3>AI Assistant</h3>
+                    <button className="close-btn" style={{color:'white'}} onClick={() => setShowChat(false)}>✕</button>
                   </div>
-                  {chatResponse && <div className="chat-output">{chatResponse}</div>}
+                  <div className="chat-body">
+                    <div className="chat-output">
+                      {isChatting ? "Thinking..." : chatResponse || "Ask a question about the current search results."}
+                    </div>
+                    <div className="chat-input-row">
+                      <input 
+                        value={chatQuery} 
+                        onChange={(e) => setChatQuery(e.target.value)} 
+                        onKeyDown={(e) => e.key === "Enter" && !isChatting && (async () => {
+                          setIsChatting(true); 
+                          const res = await invoke<string>("ask_question", { 
+                            query: chatQuery, 
+                            context: results.slice(0, 5).map(r => r.summary + "\n" + r.snippet) 
+                          });
+                          setChatResponse(res);
+                          setIsChatting(false);
+                        })()}
+                        placeholder="e.g. Which of these is most relevant to X?" 
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -188,10 +251,23 @@ function App() {
       </div>
 
       <footer className="app-footer">
-        <button className="index-btn" onClick={async () => {const s = await open({directory:true}); if(s) {setIndexing(true); await invoke("index_directory", {dirPath: s}); setIndexing(false);}}}>
+        <button className="index-btn" onClick={async () => {
+          const s = await open({directory:true}); 
+          if(s) {
+            setIndexing(true); 
+            try {
+              await invoke("index_directory", {dirPath: s});
+            } catch (e) {
+              console.error(e);
+              setMessage("Error during indexing");
+            } finally {
+              setIndexing(false);
+            }
+          }
+        }}>
           📁 Index New Directory
         </button>
-        <div className="hint">Press Enter to search, Cmd+O to open results</div>
+        <div className="hint">Hybrid search: semantic embeddings + keyword matching</div>
       </footer>
     </main>
   );
