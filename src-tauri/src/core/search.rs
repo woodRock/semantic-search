@@ -66,9 +66,21 @@ impl Search {
     }
 
     pub fn clear(&mut self) -> Result<()> {
-        let writer = self.get_writer()?;
+        let mut writer = self.get_writer()?;
         writer.delete_all_documents()?;
+        writer.commit()?;
         self.vector_docs.clear();
+        self.save_vectors()?;
+        Ok(())
+    }
+
+    pub fn remove_file(&mut self, path: &str) -> Result<()> {
+        let mut writer = self.get_writer()?;
+        let path_field = self.schema.get_field("path")?;
+        writer.delete_term(tantivy::Term::from_field_text(path_field, path));
+        writer.commit()?;
+        
+        self.vector_docs.retain(|doc| doc.path != path);
         self.save_vectors()?;
         Ok(())
     }
@@ -84,7 +96,6 @@ impl Search {
         let reader = self.index.reader()?;
         let searcher = reader.searcher();
         
-        // 1. Keyword search with snippets
         let content_field = self.schema.get_field("content").context("Missing content field")?;
         let path_field = self.schema.get_field("path").context("Missing path field")?;
         
@@ -100,7 +111,7 @@ impl Search {
         let mut keyword_scores = HashMap::new();
         let mut snippets = HashMap::new();
 
-        for (rank, (score, doc_address)) in top_docs.into_iter().enumerate() {
+        for (rank, (_score, doc_address)) in top_docs.into_iter().enumerate() {
             let retrieved_doc = searcher.doc::<TantivyDocument>(doc_address)?;
             if let Some(path) = retrieved_doc.get_first(path_field).and_then(|v| v.as_str()) {
                 let rrf_score = 1.0 / (60.0 + rank as f32);
@@ -111,7 +122,6 @@ impl Search {
             }
         }
 
-        // 2. Vector search
         let query_vector = embedding_model.embed(query_str).await.unwrap_or_default();
         let mut vector_scores = HashMap::new();
         
@@ -121,7 +131,6 @@ impl Search {
                 .map(|doc| (doc, Self::cosine_similarity(&doc.vector, &query_vector)))
                 .collect();
                 
-            // Sort by descending similarity
             all_vectors.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             
             for (rank, (doc, _sim)) in all_vectors.into_iter().take(limit * 2).enumerate() {
@@ -136,7 +145,6 @@ impl Search {
             }
         }
 
-        // 3. Combine scores
         let mut combined_scores: HashMap<String, f32> = HashMap::new();
         for (path, score) in keyword_scores {
             *combined_scores.entry(path).or_insert(0.0) += score;
