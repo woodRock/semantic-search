@@ -130,7 +130,7 @@ pub fn run() {
         )
         .setup(|_app| {
             #[cfg(target_os = "macos")]
-            _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            _app.set_activation_policy(tauri::ActivationPolicy::Regular);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![index_directory, search, get_settings, update_settings, open_path, ask_question])
