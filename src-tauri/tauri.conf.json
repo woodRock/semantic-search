@@ -12,14 +12,19 @@
   "app": {
     "windows": [
       {
-        "title": "tauri-app",
-        "width": 800,
-        "height": 600
+        "title": "Semantic Search",
+        "width": 750,
+        "height": 550,
+        "transparent": true,
+        "decorations": false,
+        "resizable": false,
+        "center": true
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

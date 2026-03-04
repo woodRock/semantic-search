@@ -2,9 +2,25 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::fs;
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize)]
 pub struct Settings {
     pub ignored_paths: Vec<String>,
+    pub ollama_url: String,
+    pub theme: String, // "system", "light", "dark"
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            ignored_paths: vec![
+                "node_modules".to_string(),
+                ".git".to_string(),
+                "target".to_string(),
+            ],
+            ollama_url: "http://localhost:11434".to_string(),
+            theme: "system".to_string(),
+        }
+    }
 }
 
 impl Settings {
@@ -12,7 +28,7 @@ impl Settings {
         let settings_path = app_data_dir.join("settings.json");
         if settings_path.exists() {
             let data = fs::read_to_string(settings_path).unwrap_or_default();
-            serde_json::from_str(&data).unwrap_or_default()
+            serde_json::from_str(&data).unwrap_or_else(|_| Self::default())
         } else {
             Self::default()
         }

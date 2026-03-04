@@ -38,6 +38,12 @@ enum Commands {
         /// Number of results to return
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
+        /// Filter by file extension (e.g. .rs, .md)
+        #[arg(short, long)]
+        ext: Option<String>,
+        /// Treat query as a regular expression
+        #[arg(short, long)]
+        regex: bool,
     },
 }
 
@@ -57,12 +63,14 @@ fn main() {
                 });
                 println!("Indexing complete!");
             }
-            Commands::Search { query, data_dir, limit } => {
+            Commands::Search { query, data_dir, limit, ext, regex } => {
                 let data_path = get_data_dir(data_dir);
+                let settings = tauri_app_lib::core::settings::Settings::load(&data_path);
                 rt.block_on(async {
                     let searcher = Search::new(&data_path).expect("Failed to create searcher");
-                    let embedding_model = EmbeddingModel::new(MODEL_NAME).expect("Failed to create embedding model");
-                    let results = searcher.hybrid_search(&embedding_model, &query, limit).await.expect("Search failed");
+                    let embedding_model = EmbeddingModel::new(MODEL_NAME, &settings.ollama_url).expect("Failed to create embedding model");
+                    let filter_ref = ext.as_deref();
+                    let results = searcher.hybrid_search(&embedding_model, &query, limit, filter_ref, regex).await.expect("Search failed");
                     
                     println!("Search results for '{}':", query);
                     for result in results {

@@ -14,13 +14,15 @@ struct OllamaEmbedResponse {
 
 pub struct EmbeddingModel {
     model_name: String,
+    base_url: String,
     client: reqwest::Client,
 }
 
 impl EmbeddingModel {
-    pub fn new(model_name: &str) -> Result<Self> {
+    pub fn new(model_name: &str, base_url: &str) -> Result<Self> {
         Ok(Self {
             model_name: model_name.to_string(),
+            base_url: base_url.trim_end_matches('/').to_string(),
             client: reqwest::Client::new(),
         })
     }
@@ -31,17 +33,22 @@ impl EmbeddingModel {
             prompt: text,
         };
 
-        let response = self.client
-            .post("http://localhost:11434/api/embeddings")
-            .json(&req)
-            .send()
-            .await?;
+        let url = format!("{}/api/embeddings", self.base_url);
+        
+        let response = match self.client.post(&url).json(&req).send().await {
+            Ok(res) => res,
+            Err(_) => return Ok(Vec::new()), // Graceful fallback if Ollama is offline
+        };
 
         if !response.status().is_success() {
-            return Err(anyhow!("Ollama API error: {}", response.status()));
+            return Ok(Vec::new()); // Fallback on HTTP error
         }
 
-        let parsed: OllamaEmbedResponse = response.json().await?;
+        let parsed: OllamaEmbedResponse = match response.json().await {
+            Ok(p) => p,
+            Err(_) => return Ok(Vec::new()),
+        };
+        
         Ok(parsed.embedding)
     }
 }

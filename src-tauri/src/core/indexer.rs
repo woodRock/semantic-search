@@ -23,9 +23,9 @@ struct ProgressEvent {
 
 impl Indexer {
     pub fn new(index_dir: PathBuf, model_name: &str) -> Result<Self> {
-        let embedding_model = EmbeddingModel::new(model_name)?;
-        let search = Search::new(&index_dir)?;
         let settings = Settings::load(&index_dir);
+        let embedding_model = EmbeddingModel::new(model_name, &settings.ollama_url)?;
+        let search = Search::new(&index_dir)?;
         
         Ok(Self {
             embedding_model,

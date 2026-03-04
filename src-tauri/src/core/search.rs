@@ -92,58 +92,103 @@ impl Search {
         if norm_a == 0.0 || norm_b == 0.0 { 0.0 } else { dot_product / (norm_a * norm_b) }
     }
 
-    pub async fn hybrid_search(&self, embedding_model: &EmbeddingModel, query_str: &str, limit: usize) -> Result<Vec<SearchResult>> {
+    pub async fn hybrid_search(
+        &self, 
+        embedding_model: &EmbeddingModel, 
+        query_str: &str, 
+        limit: usize,
+        file_type_filter: Option<&str>,
+        is_regex: bool,
+    ) -> Result<Vec<SearchResult>> {
         let reader = self.index.reader()?;
         let searcher = reader.searcher();
         
         let content_field = self.schema.get_field("content").context("Missing content field")?;
         let path_field = self.schema.get_field("path").context("Missing path field")?;
         
-        let query_parser = QueryParser::for_index(&self.index, vec![
-            self.schema.get_field("title")?,
-            content_field,
-        ]);
-        let query = query_parser.parse_query(query_str)?;
-        let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))?;
-
-        let snippet_generator = SnippetGenerator::create(&searcher, &*query, content_field)?;
-
         let mut keyword_scores = HashMap::new();
         let mut snippets = HashMap::new();
 
-        for (rank, (_score, doc_address)) in top_docs.into_iter().enumerate() {
-            let retrieved_doc = searcher.doc::<TantivyDocument>(doc_address)?;
-            if let Some(path) = retrieved_doc.get_first(path_field).and_then(|v| v.as_str()) {
-                let rrf_score = 1.0 / (60.0 + rank as f32);
-                keyword_scores.insert(path.to_string(), rrf_score);
-                
-                let snippet = snippet_generator.snippet_from_doc(&retrieved_doc);
-                snippets.insert(path.to_string(), snippet.to_html());
+        if is_regex {
+            // Regex Search Mode
+            let regex_query = tantivy::query::RegexQuery::from_pattern(query_str, content_field)?;
+            let top_docs = searcher.search(&regex_query, &TopDocs::with_limit(limit))?;
+            
+            // Simple snippet fallback for regex (snippet generator needs tweaking for regex usually)
+            for (rank, (_score, doc_address)) in top_docs.into_iter().enumerate() {
+                let retrieved_doc = searcher.doc::<TantivyDocument>(doc_address)?;
+                if let Some(path) = retrieved_doc.get_first(path_field).and_then(|v| v.as_str()) {
+                    // Apply File Filter
+                    if let Some(ext) = file_type_filter {
+                        if !path.ends_with(ext) { continue; }
+                    }
+
+                    let rrf_score = 1.0 / (60.0 + rank as f32);
+                    keyword_scores.insert(path.to_string(), rrf_score);
+                    snippets.insert(path.to_string(), format!("<i>Regex Match</i>: {}", query_str));
+                }
+            }
+        } else {
+            // Standard Keyword Search
+            let query_parser = QueryParser::for_index(&self.index, vec![
+                self.schema.get_field("title")?,
+                content_field,
+            ]);
+            let query = query_parser.parse_query(query_str)?;
+            let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))?;
+
+            let snippet_generator = SnippetGenerator::create(&searcher, &*query, content_field)?;
+
+            for (rank, (_score, doc_address)) in top_docs.into_iter().enumerate() {
+                let retrieved_doc = searcher.doc::<TantivyDocument>(doc_address)?;
+                if let Some(path) = retrieved_doc.get_first(path_field).and_then(|v| v.as_str()) {
+                    // Apply File Filter
+                    if let Some(ext) = file_type_filter {
+                        if !path.ends_with(ext) { continue; }
+                    }
+
+                    let rrf_score = 1.0 / (60.0 + rank as f32);
+                    keyword_scores.insert(path.to_string(), rrf_score);
+                    
+                    let snippet = snippet_generator.snippet_from_doc(&retrieved_doc);
+                    snippets.insert(path.to_string(), snippet.to_html());
+                }
             }
         }
 
-        let query_vector = embedding_model.embed(query_str).await.unwrap_or_default();
         let mut vector_scores = HashMap::new();
         
-        if !query_vector.is_empty() {
-            let mut all_vectors: Vec<(&VectorDoc, f32)> = self.vector_docs
-                .iter()
-                .map(|doc| (doc, Self::cosine_similarity(&doc.vector, &query_vector)))
-                .collect();
+        // Skip vector search if it's a regex query
+        if !is_regex {
+            let query_vector = embedding_model.embed(query_str).await.unwrap_or_default();
+            if !query_vector.is_empty() {
+                let mut all_vectors: Vec<(&VectorDoc, f32)> = self.vector_docs
+                    .iter()
+                    .filter(|doc| {
+                        if let Some(ext) = file_type_filter {
+                            doc.path.ends_with(ext)
+                        } else {
+                            true
+                        }
+                    })
+                    .map(|doc| (doc, Self::cosine_similarity(&doc.vector, &query_vector)))
+                    .collect();
+                    
+                all_vectors.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                 
-            all_vectors.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            
-            for (rank, (doc, _sim)) in all_vectors.into_iter().take(limit * 2).enumerate() {
-                let rrf_score = 1.0 / (60.0 + rank as f32);
-                let entry = vector_scores.entry(doc.path.clone()).or_insert(0.0);
-                if rrf_score > *entry {
-                    *entry = rrf_score;
-                }
-                if !snippets.contains_key(&doc.path) {
-                    snippets.insert(doc.path.clone(), format!("<i>Semantic match</i>: ...{}...", &doc.chunk_text.chars().take(200).collect::<String>()));
+                for (rank, (doc, _sim)) in all_vectors.into_iter().take(limit * 2).enumerate() {
+                    let rrf_score = 1.0 / (60.0 + rank as f32);
+                    let entry = vector_scores.entry(doc.path.clone()).or_insert(0.0);
+                    if rrf_score > *entry {
+                        *entry = rrf_score;
+                    }
+                    if !snippets.contains_key(&doc.path) {
+                        snippets.insert(doc.path.clone(), format!("<i>Semantic match</i>: ...{}...", &doc.chunk_text.chars().take(200).collect::<String>()));
+                    }
                 }
             }
         }
+
 
         let mut combined_scores: HashMap<String, f32> = HashMap::new();
         for (path, score) in keyword_scores {

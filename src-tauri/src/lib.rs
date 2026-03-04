@@ -4,6 +4,7 @@ use crate::core::indexer::Indexer;
 use crate::core::search::{Search, SearchResult};
 use crate::core::embedding::EmbeddingModel;
 use crate::core::settings::Settings;
+use crate::core::chat::ChatModel;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{Shortcut, Modifiers, Code};
@@ -47,11 +48,20 @@ async fn index_directory(handle: AppHandle, dir_path: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-async fn search(handle: AppHandle, query: String) -> Result<Vec<SearchResult>, String> {
+async fn search(
+    handle: AppHandle, 
+    query: String,
+    file_type_filter: Option<String>,
+    is_regex: bool
+) -> Result<Vec<SearchResult>, String> {
     let app_data_dir = handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let settings = Settings::load(&app_data_dir);
     let searcher = Search::new(&app_data_dir).map_err(|e| e.to_string())?;
-    let embedding_model = EmbeddingModel::new(MODEL_NAME).map_err(|e| e.to_string())?;
-    let results = searcher.hybrid_search(&embedding_model, &query, 20).await.map_err(|e| e.to_string())?;
+    let embedding_model = EmbeddingModel::new(MODEL_NAME, &settings.ollama_url).map_err(|e| e.to_string())?;
+    
+    let filter_ref = file_type_filter.as_deref();
+    
+    let results = searcher.hybrid_search(&embedding_model, &query, 20, filter_ref, is_regex).await.map_err(|e| e.to_string())?;
     Ok(results)
 }
 
@@ -66,6 +76,26 @@ async fn update_settings(handle: AppHandle, settings: Settings) -> Result<(), St
     let app_data_dir = handle.path().app_data_dir().map_err(|e| e.to_string())?;
     settings.save(&app_data_dir).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+fn open_path(handle: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    handle.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn ask_question(handle: AppHandle, query: String, context: Vec<String>) -> Result<String, String> {
+    let app_data_dir = handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let settings = Settings::load(&app_data_dir);
+    let chat_model = ChatModel::new(MODEL_NAME, &settings.ollama_url);
+    
+    let clean_context: Vec<String> = context.into_iter()
+        .map(|s| s.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", ""))
+        .collect();
+    
+    chat_model.ask(&query, &clean_context).await.map_err(|e| e.to_string())
 }
 
 fn toggle_window(app: &AppHandle) {
@@ -101,7 +131,7 @@ pub fn run() {
         .setup(|_app| {
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![index_directory, search, get_settings, update_settings])
+        .invoke_handler(tauri::generate_handler![index_directory, search, get_settings, update_settings, open_path, ask_question])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
