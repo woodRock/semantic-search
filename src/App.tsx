@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow, LogicalSize } from "@tauri-apps/api/webviewWindow";
 import "./App.css";
 
 interface SearchResult {
@@ -51,6 +52,18 @@ function App() {
   const [fileFilter, setFileFilter] = useState("");
   const [isRegex, setIsRegex] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+
+  // Dynamic window resizing
+  useEffect(() => {
+    const appWindow = getCurrentWebviewWindow();
+    const isExpanded = results.length > 0 || searching || !!message || showSettings;
+    
+    if (isExpanded) {
+      appWindow.setSize(new LogicalSize(750, 550));
+    } else {
+      appWindow.setSize(new LogicalSize(750, 80));
+    }
+  }, [results.length, searching, message, showSettings]);
 
   useEffect(() => {
     fetchSettings();
